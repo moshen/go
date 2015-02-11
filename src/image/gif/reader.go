@@ -34,6 +34,9 @@ const (
 	// Fields.
 	fColorMapFollows = 1 << 7
 
+	// Screen Descriptor flags.
+	sdGlobalColorTable = 1 << 7
+
 	// Image fields.
 	ifLocalColorTable = 1 << 7
 	ifInterlace       = 1 << 6
@@ -68,7 +71,7 @@ type decoder struct {
 	height          int
 	flags           byte
 	headerFields    byte
-	backgroundIndex byte
+	backgroundIndex int
 	loopCount       int
 	delayTime       int
 
@@ -265,7 +268,11 @@ func (d *decoder) readHeaderAndScreenDescriptor() error {
 	d.width = int(d.tmp[6]) + int(d.tmp[7])<<8
 	d.height = int(d.tmp[8]) + int(d.tmp[9])<<8
 	d.headerFields = d.tmp[10]
-	d.backgroundIndex = d.tmp[11]
+	if d.headerFields&sdGlobalColorTable == 1 {
+		d.backgroundIndex = int(d.tmp[11])
+	} else {
+		d.backgroundIndex = -1
+	}
 	d.aspect = d.tmp[12]
 	d.loopCount = -1
 	d.pixelSize = uint(d.headerFields&7) + 1
@@ -429,6 +436,9 @@ type GIF struct {
 	Image     []*image.Paletted // The successive images.
 	Delay     []int             // The successive delay times, one per frame, in 100ths of a second.
 	LoopCount int               // The loop count.
+	Config    image.Config
+	// The background index in the Global Color Map.  -1 if there is no Global Color Map defined
+	BackgroundIndex int
 }
 
 // DecodeAll reads a GIF image from r and returns the sequential frames
@@ -442,6 +452,12 @@ func DecodeAll(r io.Reader) (*GIF, error) {
 		Image:     d.image,
 		LoopCount: d.loopCount,
 		Delay:     d.delay,
+		Config: image.Config{
+			ColorModel: d.globalColorMap,
+			Width:      d.width,
+			Height:     d.height,
+		},
+		BackgroundIndex: d.backgroundIndex,
 	}
 	return gif, nil
 }
