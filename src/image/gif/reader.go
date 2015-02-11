@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"io"
 )
 
@@ -452,6 +453,63 @@ type GIF struct {
 	Config    image.Config
 	// The background index in the Global Color Map.  -1 if there is no Global Color Map defined
 	BackgroundIndex int
+}
+
+// Explode transforms each frame of a GIF into a full image based on the gif
+// background, palette and frame disposal rules.
+func (g *GIF) Explode() []*image.RGBA {
+	gifLen := len(g.Image)
+	explodedGif := make([]*image.RGBA, gifLen, gifLen)
+	lastNpd := 0 // The last non-previous disposal Image index
+	imageBounds := image.Rect(0, 0, g.Config.Width, g.Config.Height)
+
+	fillIn := func(img *image.RGBA, c color.Color) {
+		for y := imageBounds.Min.Y; y < imageBounds.Max.Y; y++ {
+			for x := imageBounds.Min.X; x < imageBounds.Max.X; x++ {
+				img.Set(x, y, c)
+			}
+		}
+	}
+
+	drawOverBg := func(img image.Image) *image.RGBA {
+		newimg := image.NewRGBA(imageBounds)
+		if g.BackgroundIndex >= 0 {
+			fillIn(newimg, g.Config.ColorModel.(color.Palette)[g.BackgroundIndex])
+		} else {
+			fillIn(newimg, color.Transparent)
+		}
+		b := img.Bounds()
+		draw.Draw(newimg, b, img, b.Min, draw.Over)
+		return newimg
+	}
+
+	drawOverImg := func(lower, higher image.Image) *image.RGBA {
+		newimg := image.NewRGBA(imageBounds)
+		b := higher.Bounds()
+		draw.Draw(newimg, imageBounds, lower, image.ZP, draw.Src)
+		draw.Draw(newimg, b, higher, b.Min, draw.Over)
+		return newimg
+	}
+
+	for i, v := range g.Image {
+		if i == 0 {
+			explodedGif[i] = drawOverBg(v)
+			continue
+		}
+
+		switch g.Disposal[i-1] {
+		case DisposalBackground:
+			explodedGif[i] = drawOverBg(v)
+			lastNpd = i
+		case DisposalPrevious:
+			explodedGif[i] = drawOverImg(explodedGif[lastNpd], v)
+		default:
+			explodedGif[i] = drawOverImg(explodedGif[i-1], v)
+			lastNpd = i
+		}
+	}
+
+	return explodedGif
 }
 
 // DecodeAll reads a GIF image from r and returns the sequential frames
